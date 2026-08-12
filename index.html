@@ -4,6 +4,8 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>校园一卡通系统</title>
+    <!-- 引入 Supabase 的 JS 客户端库 -->
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
         body { font-family: '微软雅黑', sans-serif; background-color: #f0f2f5; min-height: 100vh; }
@@ -36,9 +38,10 @@
         .minus { color: #ff4d4f; font-weight: bold; }
         .low-balance { animation: shake 0.4s; }
         @keyframes shake { 0%,100%{transform:translateX(0)} 25%{transform:translateX(-6px)} 75%{transform:translateX(6px)} }
-        /* 新增：重置按钮 */
         .reset-btn { width: 100%; padding: 10px; background: #ff4d4f; color: white; border: none; border-radius: 8px; cursor: pointer; font-size: 14px; margin-top: 10px; }
         .reset-btn:hover { background: #cf1322; }
+        /* 加载状态提示 */
+        .loading { text-align: center; color: #999; padding: 20px; }
     </style>
 </head>
 <body>
@@ -83,117 +86,116 @@
 
     <div class="panel">
         <h3>📝 交易记录</h3>
-        <ul id="records"></ul>
-        <!-- 新增：重置数据按钮 -->
+        <ul id="records"><li class="loading">正在从云端加载数据...</li></ul>
         <button class="reset-btn" onclick="resetData()">🗑️ 重置所有数据</button>
     </div>
 </div>
 
 <script>
-// ========== 核心变化：用 localStorage 存取数据 ==========
+    // ========== 1. 连接云端数据库 ==========
+    const SUPABASE_URL = '【https://fbdawaqefcdpzvfzjbjl.supabase.co】';
+    const SUPABASE_KEY = '【eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImZiZGF3YXFlZmNkcHp2ZnpqYmpsIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODYzOTc3MzQsImV4cCI6MjEwMTk3MzczNH0.Q0AXYq2odvXu5ACXHRqaxDa-O8_gSiU4we33rB7sT-Q】';
+    const supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
 
-const STORAGE_KEY_BALANCE = 'ykt_balance';
-const STORAGE_KEY_RECORDS = 'ykt_records';
+    let balance = 0;
+    let records = [];
 
-// 初始化：从 localStorage 读取，没有则给默认值
-function loadData() {
-    const savedBalance = localStorage.getItem(STORAGE_KEY_BALANCE);
-    const savedRecords = localStorage.getItem(STORAGE_KEY_RECORDS);
+    // ========== 2. 页面加载时，从云端拉取数据 ==========
+    async function loadData() {
+        const { data, error } = await supabase
+            .from('transactions')
+            .select('*')
+            .order('created_at', { ascending: false });
 
-    if (savedBalance !== null) {
-        balance = parseFloat(savedBalance);
-    } else {
-        balance = 100.00; // 首次访问赠送100
+        if (error) {
+            console.error('加载数据失败:', error);
+            alert('连接云端数据库失败，请检查 URL 和 Key 是否正确！');
+            return;
+        }
+
+        records = data || [];
+        // 计算余额：充值加，消费减
+        balance = records.reduce((sum, r) => {
+            return r.is_plus ? sum + r.amount : sum - r.amount;
+        }, 0);
+
+        updateUI();
     }
 
-    if (savedRecords !== null) {
-        records = JSON.parse(savedRecords);
-    } else {
-        records = [{ name: '系统初始化赠送', money: 100, isPlus: true, time: new Date().toLocaleTimeString() }];
+    // ========== 3. 充值功能 ==========
+    async function recharge() {
+        const money = parseFloat(document.getElementById('amount').value);
+        if (isNaN(money) || money <= 0) { alert('请输入有效的金额！'); return; }
+
+        const { error } = await supabase.from('transactions').insert([
+            { type: '充值', place: '在线充值', amount: money, is_plus: true }
+        ]);
+
+        if (error) { alert('充值失败: ' + error.message); return; }
+
+        document.getElementById('amount').value = '';
+        document.querySelectorAll('.amount-btn').forEach(b => b.classList.remove('active'));
+        alert('充值成功：' + money.toFixed(2) + ' 元！');
+        loadData(); // 重新拉取最新数据
     }
 
-    updateBalance();
-    renderRecords();
-}
+    // ========== 4. 消费功能 ==========
+    async function spend(money, place) {
+        if (balance < money) {
+            const card = document.querySelector('.card');
+            card.classList.add('low-balance');
+            setTimeout(() => card.classList.remove('low-balance'), 400);
+            alert('❌ 余额不足！当前余额 ' + balance.toFixed(2) + ' 元，请先充值。');
+            return;
+        }
 
-// 保存到 localStorage
-function saveData() {
-    localStorage.setItem(STORAGE_KEY_BALANCE, balance.toFixed(2));
-    localStorage.setItem(STORAGE_KEY_RECORDS, JSON.stringify(records));
-}
+        const { error } = await supabase.from('transactions').insert([
+            { type: '消费', place: place, amount: money, is_plus: false }
+        ]);
 
-let balance = 0;
-let records = [];
+        if (error) { alert('消费失败: ' + error.message); return; }
 
-// ========== 页面加载时自动读取数据 ==========
-loadData();
-
-function chooseAmount(num, btn) {
-    document.getElementById('amount').value = num;
-    document.querySelectorAll('.amount-btn').forEach(b => b.classList.remove('active'));
-    btn.classList.add('active');
-}
-
-function recharge() {
-    const money = parseFloat(document.getElementById('amount').value);
-    if (isNaN(money) || money <= 0) { alert('请输入有效的金额！'); return; }
-
-    balance += money;
-    addRecord('卡片充值', money, true);
-    saveData(); // ← 关键：操作完立刻存
-
-    document.getElementById('amount').value = '';
-    document.querySelectorAll('.amount-btn').forEach(b => b.classList.remove('active'));
-    alert('充值成功：' + money.toFixed(2) + ' 元！');
-}
-
-function spend(money, place) {
-    if (balance < money) {
-        const card = document.querySelector('.card');
-        card.classList.add('low-balance');
-        setTimeout(() => card.classList.remove('low-balance'), 400);
-        alert('❌ 余额不足！当前余额 ' + balance.toFixed(2) + ' 元，请先充值。');
-        return;
+        alert('✅ 在【' + place + '】消费 ' + money.toFixed(2) + ' 元，刷卡成功！');
+        loadData(); // 重新拉取最新数据
     }
-    balance -= money;
-    addRecord(place + ' 消费', money, false);
-    saveData(); // ← 关键：操作完立刻存
-    alert('✅ 在【' + place + '】消费 ' + money.toFixed(2) + ' 元，刷卡成功！');
-}
 
-function updateBalance() {
-    document.getElementById('balance').innerText = balance.toFixed(2);
-}
+    // ========== 5. 重置数据（清空云端表） ==========
+    async function resetData() {
+        if (!confirm('确定要清空云端所有数据吗？')) return;
+        const { error } = await supabase.from('transactions').delete().neq('id', -1);
+        if (error) { alert('重置失败: ' + error.message); return; }
+        alert('数据已重置！');
+        loadData();
+    }
 
-// 记录改为数组驱动，不再直接操作DOM
-function addRecord(name, money, isPlus) {
-    const record = { name, money, isPlus, time: new Date().toLocaleTimeString() };
-    records.unshift(record); // 插到数组最前面
-    renderRecords();
-}
+    // ========== 6. 更新界面 ==========
+    function updateUI() {
+        document.getElementById('balance').innerText = balance.toFixed(2);
+        const list = document.getElementById('records');
+        list.innerHTML = '';
+        if (records.length === 0) {
+            list.innerHTML = '<li class="loading">暂无交易记录</li>';
+            return;
+        }
+        records.forEach(r => {
+            const li = document.createElement('li');
+            const time = new Date(r.created_at).toLocaleTimeString();
+            li.innerHTML =
+                '<span>' + r.place + ' ' + time + '</span>' +
+                '<span class="' + (r.is_plus ? 'plus' : 'minus') + '">' +
+                (r.is_plus ? '+' : '-') + r.amount.toFixed(2) + '</span>';
+            list.appendChild(li);
+        });
+    }
 
-// 根据数组渲染列表
-function renderRecords() {
-    const list = document.getElementById('records');
-    list.innerHTML = ''; // 清空后重绘
-    records.forEach(r => {
-        const li = document.createElement('li');
-        li.innerHTML =
-            '<span>' + r.name + ' ' + r.time + '</span>' +
-            '<span class="' + (r.isPlus ? 'plus' : 'minus') + '">' +
-            (r.isPlus ? '+' : '-') + r.money.toFixed(2) + '</span>';
-        list.appendChild(li);
-    });
-}
+    function chooseAmount(num, btn) {
+        document.getElementById('amount').value = num;
+        document.querySelectorAll('.amount-btn').forEach(b => b.classList.remove('active'));
+        btn.classList.add('active');
+    }
 
-// 新增：重置功能
-function resetData() {
-    if (!confirm('确定要清空所有数据吗？余额将恢复为100元。')) return;
-    localStorage.removeItem(STORAGE_KEY_BALANCE);
-    localStorage.removeItem(STORAGE_KEY_RECORDS);
+    // 启动！
     loadData();
-    alert('数据已重置！');
-}
 </script>
 
 </body>
