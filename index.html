@@ -93,77 +93,74 @@
 
 <script>
     // ========== 1. 连接云端数据库 ==========
-    const SUPABASE_URL = 'https://fbdawaqefcdpzvfzjbjl.supabase.co';
-    const SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImZiZGF3YXFlZmNkcHp2ZnpqYmpsIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODYzOTc3MzQsImV4cCI6MjEwMTk3MzczNH0.Q0AXYq2odvXu5ACXHRqaxDa-O8_gSiU4we33rB7sT-Q';
-    const supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+    var SUPABASE_URL = 'https://fbdawaqefcdpzvfzjbjl.supabase.co';
+    var SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImZiZGF3YXFlZmNkcHp2ZnpqYmpsIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODYzOTc3MzQsImV4cCI6MjEwMTk3MzczNH0.Q0AXYq2odvXu5ACXHRqaxDa-O8_gSiU4we33rB7sT-Q';
 
-    let balance = 0;
-    let records = [];
+    // 兼容不同版本的 CDN：尝试多种方式创建客户端
+    var sb;
+    if (typeof window.supabase !== 'undefined' && window.supabase.createClient) {
+        sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+    } else if (typeof supabase !== 'undefined' && supabase.createClient) {
+        sb = supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+    } else {
+        alert('Supabase 库加载失败！请检查网络连接。');
+    }
+
+    var balance = 0;
+    var records = [];
 
     // ========== 2. 页面加载时，从云端拉取数据 ==========
     async function loadData() {
-        const { data, error } = await supabase
-            .from('transactions')
-            .select('*')
-            .order('created_at', { ascending: false });
-
-        if (error) {
-            console.error('加载数据失败:', error);
-            alert('连接云端数据库失败，请检查 URL 和 Key 是否正确！');
+        if (!sb) return;
+        var result = await sb.from('transactions').select('*').order('created_at', { ascending: false });
+        if (result.error) {
+            console.error('加载数据失败:', result.error);
+            alert('连接云端数据库失败！错误: ' + result.error.message);
             return;
         }
-
-        records = data || [];
-        // 计算余额：充值加，消费减
-        balance = records.reduce((sum, r) => {
+        records = result.data || [];
+        balance = records.reduce(function(sum, r) {
             return r.is_plus ? sum + r.amount : sum - r.amount;
         }, 0);
-
         updateUI();
     }
 
     // ========== 3. 充值功能 ==========
     async function recharge() {
-        const money = parseFloat(document.getElementById('amount').value);
+        var money = parseFloat(document.getElementById('amount').value);
         if (isNaN(money) || money <= 0) { alert('请输入有效的金额！'); return; }
-
-        const { error } = await supabase.from('transactions').insert([
+        var result = await sb.from('transactions').insert([
             { type: '充值', place: '在线充值', amount: money, is_plus: true }
         ]);
-
-        if (error) { alert('充值失败: ' + error.message); return; }
-
+        if (result.error) { alert('充值失败: ' + result.error.message); return; }
         document.getElementById('amount').value = '';
-        document.querySelectorAll('.amount-btn').forEach(b => b.classList.remove('active'));
+        document.querySelectorAll('.amount-btn').forEach(function(b) { b.classList.remove('active'); });
         alert('充值成功：' + money.toFixed(2) + ' 元！');
-        loadData(); // 重新拉取最新数据
+        loadData();
     }
 
     // ========== 4. 消费功能 ==========
     async function spend(money, place) {
         if (balance < money) {
-            const card = document.querySelector('.card');
+            var card = document.querySelector('.card');
             card.classList.add('low-balance');
-            setTimeout(() => card.classList.remove('low-balance'), 400);
+            setTimeout(function() { card.classList.remove('low-balance'); }, 400);
             alert('❌ 余额不足！当前余额 ' + balance.toFixed(2) + ' 元，请先充值。');
             return;
         }
-
-        const { error } = await supabase.from('transactions').insert([
+        var result = await sb.from('transactions').insert([
             { type: '消费', place: place, amount: money, is_plus: false }
         ]);
-
-        if (error) { alert('消费失败: ' + error.message); return; }
-
+        if (result.error) { alert('消费失败: ' + result.error.message); return; }
         alert('✅ 在【' + place + '】消费 ' + money.toFixed(2) + ' 元，刷卡成功！');
-        loadData(); // 重新拉取最新数据
+        loadData();
     }
 
-    // ========== 5. 重置数据（清空云端表） ==========
+    // ========== 5. 重置数据 ==========
     async function resetData() {
         if (!confirm('确定要清空云端所有数据吗？')) return;
-        const { error } = await supabase.from('transactions').delete().neq('id', -1);
-        if (error) { alert('重置失败: ' + error.message); return; }
+        var result = await sb.from('transactions').delete().neq('id', -1);
+        if (result.error) { alert('重置失败: ' + result.error.message); return; }
         alert('数据已重置！');
         loadData();
     }
@@ -171,15 +168,15 @@
     // ========== 6. 更新界面 ==========
     function updateUI() {
         document.getElementById('balance').innerText = balance.toFixed(2);
-        const list = document.getElementById('records');
+        var list = document.getElementById('records');
         list.innerHTML = '';
         if (records.length === 0) {
             list.innerHTML = '<li class="loading">暂无交易记录</li>';
             return;
         }
-        records.forEach(r => {
-            const li = document.createElement('li');
-            const time = new Date(r.created_at).toLocaleTimeString();
+        records.forEach(function(r) {
+            var li = document.createElement('li');
+            var time = new Date(r.created_at).toLocaleTimeString();
             li.innerHTML =
                 '<span>' + r.place + ' ' + time + '</span>' +
                 '<span class="' + (r.is_plus ? 'plus' : 'minus') + '">' +
@@ -188,9 +185,10 @@
         });
     }
 
+    // ========== 7. 选择金额 ==========
     function chooseAmount(num, btn) {
         document.getElementById('amount').value = num;
-        document.querySelectorAll('.amount-btn').forEach(b => b.classList.remove('active'));
+        document.querySelectorAll('.amount-btn').forEach(function(b) { b.classList.remove('active'); });
         btn.classList.add('active');
     }
 
